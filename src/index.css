@@ -1,0 +1,121 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Be Vietnam Pro", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --color-background: #ffffff;
+  --color-foreground: #09090b;
+
+  --color-border: #e4e4e7;
+  --color-input: #e4e4e7;
+  --color-ring: #18181b;
+
+  --radius-lg: 0.5rem;
+  --radius-md: calc(0.5rem - 2px);
+  --radius-sm: calc(0.5rem - 4px);
+}
+
+@layer base {
+
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-border, currentColor);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: 'Be Vietnam Pro', 'Montserrat', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer utilities {
+  .space-bg {
+    /* Main deep space gradient transitioning from orange/peach to dark purple */
+    background: radial-gradient(ellipse at top left, #df8962 0%, #762f6b 35%, #201347 100%);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .space-bg::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    /* Creating a subtle star pattern using multiple small radial gradients */
+    background-image:
+      radial-gradient(1px 1px at 20px 30px, #ffffff, rgba(0, 0, 0, 0)),
+      radial-gradient(1.5px 1.5px at 140px 70px, rgba(255, 255, 255, 0.8), rgba(0, 0, 0, 0)),
+      radial-gradient(1px 1px at 50px 160px, rgba(255, 255, 255, 0.6), rgba(0, 0, 0, 0)),
+      radial-gradient(2px 2px at 190px 40px, rgba(255, 255, 255, 0.9), rgba(0, 0, 0, 0)),
+      radial-gradient(1px 1px at 230px 180px, #ffffff, rgba(0, 0, 0, 0)),
+      radial-gradient(1.5px 1.5px at 300px 120px, rgba(255, 255, 255, 0.7), rgba(0, 0, 0, 0));
+    background-repeat: repeat;
+    background-size: 350px 350px;
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  @keyframes marquee-placeholder {
+    0% { transform: translateX(0); }
+    15% { transform: translateX(0); }
+    85% { transform: translateX(calc(-100% + 200px)); }
+    100% { transform: translateX(calc(-100% + 200px)); }
+  }
+  
+  .group:hover .animate-marquee-placeholder {
+    animation: marquee-placeholder 4.5s linear infinite alternate;
+  }
+
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-1px); }
+    75% { transform: translateX(1px); }
+  }
+
+  .animate-shake {
+    animation: shake 0.3s ease-in-out infinite;
+  }
+
+  @keyframes playing-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.4); transform: scale(1); }
+    50% { box-shadow: 0 0 0 10px rgba(244, 63, 94, 0); transform: scale(1.05); }
+    100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0); transform: scale(1); }
+  }
+
+  .animate-playing {
+    animation: playing-pulse 1.5s infinite;
+  }
+}
+
+@layer base {
+  /* Minimalist elegant scrollbar universally for webkit */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: rgba(217, 70, 239, 0.3); /* fuchsia-500 equivalent */
+    border-radius: 9999px;
+    border: 1px solid transparent;
+    background-clip: padding-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(217, 70, 239, 0.6);
+  }
+
+  /* For Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(217, 70, 239, 0.4) transparent;
+  }
+}
