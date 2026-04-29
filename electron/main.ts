@@ -287,6 +287,32 @@ ipcMain.handle('select-directory', async () => {
   return res.filePaths[0];
 });
 
+ipcMain.handle('download-file-local', async (_event, { url, outputPath }) => {
+  try {
+    const parentDir = path.dirname(outputPath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+    await downloadFile(url, outputPath);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('copy-file-local', async (_event, { sourcePath, outputPath }) => {
+  try {
+    const parentDir = path.dirname(outputPath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+    fs.copyFileSync(sourcePath, outputPath);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMain.handle('execute-ffmpeg-merge-local', async (_event, { videoUrl, audioUrl, outputFilePath }) => {
   if (!win) return { success: false, error: 'No active window' };
 
@@ -352,6 +378,97 @@ ipcMain.handle('execute-ffmpeg-merge-local', async (_event, { videoUrl, audioUrl
     }
   }
 });
+
+ipcMain.handle('execute-voice-conversion-local', async (_event, { videoUrl, audioUrl, outputFilePath, aiSvcUrl }) => {
+  if (!win) return { success: false, error: 'No active window' };
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vc-merge-'));
+  const tempVideo = path.join(tempDir, 'temp_video.mp4');
+  const tempTargetAudio = path.join(tempDir, 'temp_target.wav');
+  const tempSourceAudio = path.join(tempDir, 'temp_source.wav');
+  const tempConvertedAudio = path.join(tempDir, 'temp_converted.wav');
+
+  try {
+    // 1. Download Video
+    if (videoUrl.startsWith('http')) {
+      await downloadFile(videoUrl, tempVideo);
+    } else if (fs.existsSync(videoUrl)) {
+      fs.copyFileSync(videoUrl, tempVideo);
+    } else {
+      throw new Error(`Video not found: ${videoUrl}`);
+    }
+
+    // 2. Download Target Audio (Giọng mẫu)
+    if (audioUrl.startsWith('http')) {
+      await downloadFile(audioUrl, tempTargetAudio);
+    } else if (fs.existsSync(audioUrl)) {
+      fs.copyFileSync(audioUrl, tempTargetAudio);
+    } else {
+      throw new Error(`Audio not found: ${audioUrl}`);
+    }
+
+    // 3. Extract Source Audio (Tách tiếng thật từ Video)
+    const ffmpegPath = getFfmpegPath();
+    console.log("==> EXTRACTING SOURCE AUDIO...");
+    await new Promise<void>((resolve, reject) => {
+      execFile(ffmpegPath, ['-y', '-i', tempVideo, '-q:a', '0', '-map', 'a', tempSourceAudio], { cwd: tempDir }, (err, _stdout, stderr) => {
+        if (err) reject(new Error(stderr || err.message));
+        else resolve();
+      });
+    });
+
+    // 4. Call AI Service (Seed-VC)
+    console.log("==> CALLING SEED-VC AI...");
+    const apiUrl = aiSvcUrl || 'http://127.0.0.1:8000'; 
+    // @ts-ignore
+    const response = await fetch(`${apiUrl}/vc/convert`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source_audio: tempSourceAudio,
+        target_audio: tempTargetAudio,
+        output_path: tempConvertedAudio
+      })
+    });
+    
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`AI Service Error: ${errText}`);
+    }
+
+    // 5. Merge Converted Audio with Original Video
+    console.log("==> MERGING CONVERTED AUDIO TO VIDEO...");
+    await new Promise<void>((resolve, reject) => {
+      execFile(ffmpegPath, [
+        '-y',
+        '-i', tempVideo,
+        '-i', tempConvertedAudio,
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-map', '0:v:0',
+        '-map', '1:a:0',
+        outputFilePath
+      ], { cwd: tempDir }, (err, _stdout, stderr) => {
+        if (err) reject(new Error(stderr || err.message));
+        else resolve();
+      });
+    });
+
+    return { success: true, filePath: outputFilePath };
+  } catch (err: any) {
+    console.error("VC Merge Error:", err);
+    return { success: false, error: err.message };
+  } finally {
+    try {
+      if (fs.existsSync(tempDir)) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    } catch (e) {
+      console.error("Failed to cleanup VC temp dir:", e);
+    }
+  }
+});
+
 
 ipcMain.handle('merge-videos-in-folder', async (_event, { folderPath }) => {
   if (!win) return { success: false, error: 'No active window' };

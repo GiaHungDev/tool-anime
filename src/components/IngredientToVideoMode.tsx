@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useContext } from 'react';
+import { useState, useEffect, useMemo, useContext, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { GlobalAudioContext } from '../contexts/GlobalAudioContext';
 import { Trash2, RotateCcw, Download, Image as ImageIcon, Save, Check, X, FileSpreadsheet, Plus, Upload, User, AlertCircle, ChevronDown, ChevronUp, Activity, Settings, PauseCircle, PlayCircle, Sparkles, Loader2, BookOpen, Mic, Volume2, Cpu, Play, Wand2, Library } from 'lucide-react';
@@ -164,6 +164,15 @@ export default function IngredientToVideoMode() {
   const toggleProject = (pName: string) => {
     setExpandedProjects(prev => ({ ...prev, [pName]: prev[pName] === false ? true : false }));
   };
+
+  const [conversionProgress, setConversionProgress] = useState<Record<string, number>>({});
+  const conversionIntervals = useRef<Record<string, any>>({});
+
+  useEffect(() => {
+    return () => {
+      Object.values(conversionIntervals.current).forEach(interval => clearInterval(interval));
+    };
+  }, []);
 
   interface StoryBoard {
     id: string;
@@ -452,56 +461,168 @@ export default function IngredientToVideoMode() {
   const handleMergeAudioToVideo = async (videoId: number, sentenceId: string) => {
     // 1. Lấy thông tin URL
     const row = tableData.find(r => r.id === videoId);
-    if (!row || !row.videoURL) {
+    if (!row || !(row.videoURL || row.result || row.result_image || row.s3Key)) {
       setShowErrorToast({ show: true, message: 'Không tìm thấy video gốc!' });
       setTimeout(() => setShowErrorToast({ show: false, message: '' }), 3000);
       return;
     }
+
+    // Find video url
+    const resultVid = row.videoURL || row.result || row.result_image || row.s3Key;
+    let vUrl = '';
+    if (typeof resultVid === 'string') {
+      try {
+        const parsed = JSON.parse(resultVid);
+        vUrl = resolveImageUrl(parsed.url || parsed.s3Key || resultVid);
+      } catch {
+        vUrl = resolveImageUrl(resultVid);
+      }
+    } else if (Array.isArray(resultVid)) {
+      vUrl = resolveImageUrl(resultVid[0]);
+    } else {
+      vUrl = resolveImageUrl(resultVid);
+    }
+
+    if (!vUrl.startsWith('http')) {
+      vUrl = vUrl.startsWith('/') ? `${window.location.origin}${vUrl}` : vUrl;
+    }
+
     const sentences = Object.values(projectSentences).flat() as any[];
     const sentence = sentences.find(s => s.id === sentenceId);
     if (!sentence || !(sentence.audioPath || sentence.status?.toLowerCase() === 'completed')) {
-      setShowErrorToast({ show: true, message: 'Không tìm thấy file audio!' });
+      setShowErrorToast({ show: true, message: 'Không tìm thấy file audio để làm mẫu giọng!' });
       setTimeout(() => setShowErrorToast({ show: false, message: '' }), 3000);
       return;
     }
 
-    // 2. Chọn thư mục lưu
-    let outputDir = '';
-    try {
-      outputDir = await (window as any).ipcRenderer?.invoke('select-directory');
-      if (!outputDir) return; // Hủy chọn
-    } catch (e) {
-      setShowErrorToast({ show: true, message: 'Ứng dụng không hỗ trợ tính năng lưu Local (chỉ chạy trên Electron)' });
-      setTimeout(() => setShowErrorToast({ show: false, message: '' }), 4000);
-      return;
-    }
+    let aUrl = api_tts.getStreamUrl(sentence.id);
+
+    const meta = parseMetadata(row.metadata);
+    const projectName = meta.projectName || 'Du_An_Khac';
 
     setMergingSentences(prev => ({ ...prev, [sentenceId]: true }));
+    setConversionProgress(prev => ({ ...prev, [sentenceId]: 0 }));
+
+    conversionIntervals.current[sentenceId] = setInterval(async () => {
+      try {
+        const pRes = await fetch(`${API_URL}/tts/voice-conversion-progress/${sentenceId}`);
+        const pData = await pRes.json();
+        if (pData.progress > 0) setConversionProgress(prev => ({ ...prev, [sentenceId]: pData.progress }));
+      } catch (e) { }
+    }, 1500);
+
     try {
-      let vUrl = row.videoURL;
-      if (!vUrl.startsWith('http')) {
-        vUrl = vUrl.startsWith('/') ? `http://localhost:3000${vUrl}` : vUrl;
-      }
-      let aUrl = api_tts.getStreamUrl(sentence.id);
+      const cleanProjectName = projectName.replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_');
+      const outputPath = `C:\\${cleanProjectName}\\video_${videoId}.mp4`;
 
-      const outputFilePath = `${outputDir}\\Merged_Video_${videoId}_${Date.now()}.mp4`;
-
-      const res = await (window as any).ipcRenderer.invoke('execute-ffmpeg-merge-local', {
-        videoUrl: vUrl,
-        audioUrl: aUrl,
-        outputFilePath
+      const response = await fetchWithAuth(`${API_URL}/tts/voice-conversion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoUrl: vUrl,
+          targetAudioUrl: aUrl,
+          sentenceId: sentenceId,
+          outputPath: outputPath
+        })
       });
 
-      if (res && res.success) {
-        setSuccessToastMessage(`Đã xuất file thành công: ${res.filePath}`);
+      clearInterval(conversionIntervals.current[sentenceId]);
+      setConversionProgress(prev => ({ ...prev, [sentenceId]: 100 }));
+
+      const resData = await response.json();
+      if (response.ok && resData.success) {
+        // Cập nhật kết quả vào database để hiển thị trên UI
+        await fetchWithAuth(`${API_URL}/veo3/video/${videoId}/video-url`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ videoURL: outputPath })
+        });
+
+        fetchImages();
+
+        setSuccessToastMessage(`Đã convert & lưu về ${outputPath}!`);
+
         setShowSuccessToast(true);
         setTimeout(() => setShowSuccessToast(false), 4000);
       } else {
-        setShowErrorToast({ show: true, message: `Lỗi ghép video: ${res.error}` });
+        setShowErrorToast({ show: true, message: `Lỗi Server: ${resData.message || 'Unknown error'}` });
         setTimeout(() => setShowErrorToast(prev => ({ ...prev, show: false })), 4000);
       }
-    } catch (e) {
-      setShowErrorToast({ show: true, message: 'Lỗi gọi tiến trình xử lý Local!' });
+    } catch (e: any) {
+      clearInterval(conversionIntervals.current[sentenceId]);
+      setShowErrorToast({ show: true, message: `Lỗi kết nối: ${e.message}` });
+      setTimeout(() => setShowErrorToast(prev => ({ ...prev, show: false })), 3000);
+    } finally {
+      clearInterval(conversionIntervals.current[sentenceId]);
+      setMergingSentences(prev => ({ ...prev, [sentenceId]: false }));
+    }
+  };
+
+  const handleSyncMergeVoice = async (videoId: number, sentenceId: string) => {
+    const row = tableData.find(r => r.id === videoId);
+    if (!row || !(row.videoURL || row.result || row.result_image || row.s3Key)) {
+      setShowErrorToast({ show: true, message: 'Không tìm thấy video gốc!' });
+      setTimeout(() => setShowErrorToast({ show: false, message: '' }), 3000);
+      return;
+    }
+
+    const resultVid = row.videoURL || row.result || row.result_image || row.s3Key;
+    let vUrl = '';
+    if (typeof resultVid === 'string') {
+      try {
+        vUrl = resolveImageUrl(JSON.parse(resultVid).url || JSON.parse(resultVid).s3Key || resultVid);
+      } catch { vUrl = resolveImageUrl(resultVid); }
+    } else if (Array.isArray(resultVid)) {
+      vUrl = resolveImageUrl(resultVid[0]?.url || resultVid[0]?.s3Key || resultVid[0]);
+    } else { vUrl = resolveImageUrl(resultVid); }
+
+    if (!vUrl.startsWith('http')) vUrl = vUrl.startsWith('/') ? `${window.location.origin}${vUrl}` : vUrl;
+
+    const sentences = Object.values(projectSentences).flat() as any[];
+    const sentence = sentences.find(s => s.id === sentenceId);
+    if (!sentence || !(sentence.audioPath || sentence.status?.toLowerCase() === 'completed')) {
+      setShowErrorToast({ show: true, message: 'Không tìm thấy file audio để ghép!' });
+      setTimeout(() => setShowErrorToast({ show: false, message: '' }), 3000);
+      return;
+    }
+
+    let aUrl = api_tts.getStreamUrl(sentence.id);
+    const meta = parseMetadata(row.metadata);
+    const projectName = meta.projectName || 'Du_An_Khac';
+
+    setMergingSentences(prev => ({ ...prev, [sentenceId]: true }));
+
+    try {
+      const cleanProjectName = projectName.replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_');
+      const outputPath = `C:\\${cleanProjectName}\\video_${videoId}.mp4`;
+
+      const response = await fetchWithAuth(`${API_URL}/tts/sync-merge-voice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoUrl: vUrl,
+          targetAudioUrl: aUrl,
+          outputPath: outputPath
+        })
+      });
+
+      const resData = await response.json();
+      if (response.ok && resData.success) {
+        await fetchWithAuth(`${API_URL}/veo3/video/${videoId}/video-url`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ videoURL: outputPath })
+        });
+        fetchImages();
+        setSuccessToastMessage(`Đã ghép giọng & lưu về ${outputPath}!`);
+        setShowSuccessToast(true);
+        setTimeout(() => setShowSuccessToast(false), 4000);
+      } else {
+        setShowErrorToast({ show: true, message: `Lỗi Server: ${resData.message || 'Unknown error'}` });
+        setTimeout(() => setShowErrorToast(prev => ({ ...prev, show: false })), 4000);
+      }
+    } catch (e: any) {
+      setShowErrorToast({ show: true, message: `Lỗi kết nối: ${e.message}` });
       setTimeout(() => setShowErrorToast(prev => ({ ...prev, show: false })), 3000);
     } finally {
       setMergingSentences(prev => ({ ...prev, [sentenceId]: false }));
@@ -533,7 +654,27 @@ export default function IngredientToVideoMode() {
 
       for (const s of sentences) {
         if (s.audioPath || s.status?.toLowerCase() === 'completed') {
-          tasks.push({ videoId: row.id, sentenceId: s.id, videoUrl: row.videoURL, audioUrl: api_tts.getStreamUrl(s.id) });
+          // Find real video URL
+          const resultVid = row.videoURL || row.result || row.result_image || row.s3Key;
+          let vUrl = '';
+          if (typeof resultVid === 'string') {
+            try {
+              const parsed = JSON.parse(resultVid);
+              vUrl = resolveImageUrl(parsed.url || parsed.s3Key || resultVid);
+            } catch {
+              vUrl = resolveImageUrl(resultVid);
+            }
+          } else if (Array.isArray(resultVid)) {
+            vUrl = resolveImageUrl(resultVid[0]);
+          } else {
+            vUrl = resolveImageUrl(resultVid);
+          }
+
+          if (!vUrl.startsWith('http')) {
+            vUrl = vUrl.startsWith('/') ? `${window.location.origin}${vUrl}` : vUrl;
+          }
+
+          tasks.push({ videoId: row.id, sentenceId: s.id, videoUrl: vUrl, audioUrl: api_tts.getStreamUrl(s.id) });
           break; // Chỉ cần convert câu thoại đầu tiên hợp lệ của video
         }
       }
@@ -545,47 +686,66 @@ export default function IngredientToVideoMode() {
       return;
     }
 
-    let outputDir = '';
-    try {
-      outputDir = await (window as any).ipcRenderer?.invoke('select-directory');
-      if (!outputDir) return; // Hủy chọn
-    } catch (e) {
-      setShowErrorToast({ show: true, message: 'Ứng dụng không hỗ trợ tính năng lưu Local (chỉ chạy trên Electron)' });
-      setTimeout(() => setShowErrorToast({ show: false, message: '' }), 4000);
-      return;
-    }
-
     setIsConvertingAll(prev => ({ ...prev, [projectName]: true }));
 
     let successCount = 0;
-    // Chạy tuần tự để tránh lỗi ffmpeg đụng nhau hoặc quá tải ổ cứng
+    // Chạy tuần tự qua Backend
     for (const task of tasks) {
       setMergingSentences(prev => ({ ...prev, [task.sentenceId]: true }));
+      setConversionProgress(prev => ({ ...prev, [task.sentenceId]: 0 }));
+
+      conversionIntervals.current[task.sentenceId] = setInterval(async () => {
+        try {
+          const pRes = await fetch(`${API_URL}/tts/voice-conversion-progress/${task.sentenceId}`);
+          const pData = await pRes.json();
+          if (pData.progress > 0) setConversionProgress(prev => ({ ...prev, [task.sentenceId]: pData.progress }));
+        } catch (e) { }
+      }, 1500);
+
+      const cleanProjectName = projectName.replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_');
+      const outputPath = `C:\\${cleanProjectName}\\video_${task.videoId}.mp4`;
+
       try {
-        let vUrl = task.videoUrl;
-        if (!vUrl.startsWith('http')) vUrl = vUrl.startsWith('/') ? `http://localhost:3000${vUrl}` : vUrl;
-        let aUrl = task.audioUrl;
-
-        const outputFilePath = `${outputDir}\\${projectName.replace(/[^a-z0-9]/gi, '_')}_Scene_${task.videoId}_${Date.now()}.mp4`;
-
-        const res = await (window as any).ipcRenderer.invoke('execute-ffmpeg-merge-local', {
-          videoUrl: vUrl,
-          audioUrl: aUrl,
-          outputFilePath
+        const response = await fetchWithAuth(`${API_URL}/tts/voice-conversion`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            videoUrl: task.videoUrl,
+            targetAudioUrl: task.audioUrl,
+            sentenceId: task.sentenceId,
+            outputPath: outputPath
+          })
         });
 
-        if (res && res.success) {
+        clearInterval(conversionIntervals.current[task.sentenceId]);
+        setConversionProgress(prev => ({ ...prev, [task.sentenceId]: 100 }));
+
+        const resData = await response.json();
+        if (response.ok && resData.success) {
           successCount++;
+
+          // Cập nhật kết quả vào database
+          await fetchWithAuth(`${API_URL}/veo3/video/${task.videoId}/video-url`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ videoURL: outputPath })
+          });
+
+          // Nghỉ 1s trước khi gọi file tải tiếp theo
+          await new Promise(r => setTimeout(r, 1000));
         }
       } catch (err) {
-        console.error("Lỗi ghép từng file trong loạt:", err);
+        clearInterval(conversionIntervals.current[task.sentenceId]);
+        console.error('Convert failed for', task.videoId, err);
       } finally {
+        clearInterval(conversionIntervals.current[task.sentenceId]);
         setMergingSentences(prev => ({ ...prev, [task.sentenceId]: false }));
       }
     }
 
     setIsConvertingAll(prev => ({ ...prev, [projectName]: false }));
-    setSuccessToastMessage(`Đã hoàn tất xuất Local thành công cho ${successCount}/${tasks.length} video!`);
+    if (successCount > 0) fetchImages();
+    setSuccessToastMessage(`Đã hoàn tất chuyển đổi giọng cho ${successCount}/${tasks.length} video!`);
     setShowSuccessToast(true);
     setTimeout(() => setShowSuccessToast(false), 4000);
   };
@@ -2656,16 +2816,37 @@ export default function IngredientToVideoMode() {
                                                               }`}
                                                           >
                                                             {mergingSentences[s.id] ? (
-                                                              <div className="w-3.5 h-3.5 rounded-full border-2 border-purple-400 border-t-transparent animate-spin" />
+                                                              <div className="w-3.5 h-3.5 rounded-full border-2 border-purple-400 border-t-transparent animate-spin shrink-0" />
                                                             ) : isConverted ? (
-                                                              <Check size={14} />
+                                                              <Check size={14} className="shrink-0" />
                                                             ) : (
-                                                              <Wand2 size={14} />
+                                                              <Wand2 size={14} className="shrink-0" />
                                                             )}
-                                                            {isConverted ? 'Đã convert' : 'Convert video'}
+                                                            {mergingSentences[s.id] && conversionProgress[s.id] > 0
+                                                              ? `Convert... ${conversionProgress[s.id]}%`
+                                                              : mergingSentences[s.id]
+                                                                ? 'Đang xử lý...'
+                                                                : isConverted ? 'Đã convert' : 'Convert video'}
                                                           </button>
                                                         );
                                                       })()
+                                                    )}
+                                                    {(s.audioPath || s.status?.toLowerCase() === 'completed') && (row.videoURL || row.result || row.result_image || row.s3Key) && (
+                                                      <button
+                                                        onClick={() => handleSyncMergeVoice(row.id, s.id)}
+                                                        disabled={mergingSentences[s.id]}
+                                                        className={`px-3 py-1.5 rounded-lg border transition-all flex items-center justify-center gap-1.5 text-xs font-medium ${mergingSentences[s.id]
+                                                          ? 'bg-blue-900/50 border-blue-500/50 text-blue-400 cursor-not-allowed'
+                                                          : 'bg-blue-600/20 border-blue-500/30 text-blue-400 hover:bg-blue-600 hover:text-white hover:border-blue-500 hover:shadow-[0_0_15px_rgba(59,130,246,0.4)]'
+                                                          }`}
+                                                      >
+                                                        {mergingSentences[s.id] && conversionProgress[s.id] === undefined ? (
+                                                          <div className="w-3.5 h-3.5 rounded-full border-2 border-blue-400 border-t-transparent animate-spin shrink-0" />
+                                                        ) : (
+                                                          <Volume2 size={14} className="shrink-0" />
+                                                        )}
+                                                        Ghép giọng
+                                                      </button>
                                                     )}
                                                   </div>
                                                 </div>

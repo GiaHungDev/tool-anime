@@ -26,3 +26,4 @@ dist-ssr
 release/
 release2/
 dist-electron/
+ai_svc/
