@@ -13,12 +13,12 @@ export const resolveImageUrl = (urlOrKey: any) => {
   if (typeof urlOrKey === 'string' && urlOrKey.trim().startsWith('{')) {
     try {
       const parsed = JSON.parse(urlOrKey);
-      if (parsed.url) actualUrl = parsed.url;
+      actualUrl = parsed.url || parsed.localPath || actualUrl;
     } catch (e) {
       console.warn('Failed to parse image JSON:', urlOrKey);
     }
-  } else if (typeof urlOrKey === 'object' && urlOrKey.url) {
-    actualUrl = urlOrKey.url;
+  } else if (typeof urlOrKey === 'object') {
+    actualUrl = urlOrKey.url || urlOrKey.localPath || urlOrKey.s3Key || actualUrl;
   }
 
   if (typeof actualUrl !== 'string') return '';

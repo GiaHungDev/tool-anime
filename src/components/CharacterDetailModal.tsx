@@ -186,14 +186,32 @@ export function CharacterDetailModal({ isOpen, onClose, character, reload }: Cha
     if (!isOpen || !character) return null;
 
     const getDisplayUrl = () => {
-        if (character.imageUrl || character.exteriorUrl) {
-            return resolveImageUrl(character.imageUrl || character.exteriorUrl);
+        let rawUrl = character.imageUrl || character.exteriorUrl || character.avatar_path || '';
+        if (!rawUrl) return '';
+
+        let displayUrl = rawUrl;
+        try {
+            const parsed = JSON.parse(displayUrl);
+            displayUrl = parsed.url || parsed.localPath || displayUrl;
+        } catch (e) { }
+
+        if (displayUrl.startsWith('http') || displayUrl.startsWith('data:')) {
+            return displayUrl;
         }
-        if (character.avatar_path) {
-            if (character.avatar_path.startsWith('http')) return character.avatar_path;
-            return `${import.meta.env.VITE_SVC_API_URL}/api/tts_static/${character.avatar_path}`;
+
+        if (/^[A-Za-z]:[\\/]/.test(displayUrl) || displayUrl.startsWith('/')) {
+            return `${API_URL}/veo3/local-file?path=${encodeURIComponent(displayUrl)}`;
         }
-        return '';
+
+        // If it's a simple filename (like from TTS backend) and doesn't look like an S3 path
+        if (character.avatar_path && rawUrl === character.avatar_path && !displayUrl.includes('/')) {
+            return `${import.meta.env.VITE_SVC_API_URL}/api/tts_static/${displayUrl}`;
+        }
+
+        let cleanKey = displayUrl.startsWith('/') ? displayUrl.substring(1) : displayUrl;
+        const baseUrl = import.meta.env.VITE_S3_BASE_URL || '';
+
+        return `${baseUrl}${cleanKey}`;
     };
     const displayUrl = getDisplayUrl();
 
@@ -227,16 +245,7 @@ export function CharacterDetailModal({ isOpen, onClose, character, reload }: Cha
                                     </div>
                                 )}
                                 
-                                {isOwner && (
-                                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                        <button 
-                                            onClick={() => fileInputRef.current?.click()}
-                                            className="bg-white/20 hover:bg-white/30 backdrop-blur-md px-4 py-2 rounded-xl text-white text-xs font-bold flex items-center gap-2 border border-white/20 transition-all"
-                                        >
-                                            <Upload className="w-4 h-4" /> Thay ảnh
-                                        </button>
-                                    </div>
-                                )}
+
                             </div>
                             <input 
                                 type="file" 

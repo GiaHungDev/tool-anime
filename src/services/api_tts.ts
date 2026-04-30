@@ -54,6 +54,27 @@ const getClientAsync = async () => {
 
 // Adapter mapping các hàm cũ sang SvcApiClient, giữ nguyên cấu trúc trả về { data: ... }
 export const api_tts = {
+    // Projects
+    getProjects: async () => {
+        const token = localStorage.getItem('svc_access_token') || localStorage.getItem('access_token');
+        const res = await fetch(`${baseUrl}/api/tts/projects`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return res.json();
+    },
+    createProject: async (name: string) => {
+        const token = localStorage.getItem('svc_access_token') || localStorage.getItem('access_token');
+        const formData = new FormData();
+        formData.append('name', name);
+        const res = await fetch(`${baseUrl}/api/tts/projects`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData
+        });
+        return res.json();
+    },
+
     // Voices
     getVoices: async () => {
         const client = await getClientAsync();
@@ -115,18 +136,48 @@ export const api_tts = {
     },
 
     // Scripts
-    getScripts: async () => {
-        const client = await getClientAsync();
-        return client.getTtsScripts().then(data => ({ data }));
+    getScripts: async (projectId?: string) => {
+        const token = localStorage.getItem('svc_access_token') || localStorage.getItem('access_token');
+        const url = projectId ? `${baseUrl}/api/tts/scripts?project_id=${projectId}` : `${baseUrl}/api/tts/scripts`;
+        const res = await fetch(url, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return { data: await res.json() };
     },
-    createScript: async (title: string, language: string = "Japanese", chunkLimit: number = 200) => {
-        const client = await getClientAsync();
-        return client.createTtsScript(title, language, chunkLimit).then(data => ({ data }));
+    createScript: async (title: string, language: string = "Japanese", chunkLimit: number = 200, projectId?: string) => {
+        const token = localStorage.getItem('svc_access_token') || localStorage.getItem('access_token');
+        const formData = new FormData();
+        formData.append('title', title);
+        formData.append('language', language);
+        formData.append('chunk_limit', chunkLimit.toString());
+        if (projectId) {
+            formData.append('project_id', projectId);
+        }
+        
+        const res = await fetch(`${baseUrl}/api/tts/scripts`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData
+        });
+        const data = await res.json();
+        return { data };
     },
-    updateScript: async (scriptId: string, title?: string, language?: string, chunkLimit?: number) => {
-        const updates = { title, language, chunk_limit: chunkLimit };
-        const client = await getClientAsync();
-        return client.updateTtsScript(scriptId, updates).then(data => ({ data }));
+    updateScript: async (scriptId: string, title?: string, language?: string, chunkLimit?: number, projectId?: string) => {
+        const token = localStorage.getItem('svc_access_token') || localStorage.getItem('access_token');
+        const formData = new FormData();
+        if (title !== undefined) formData.append('title', title);
+        if (language !== undefined) formData.append('language', language);
+        if (chunkLimit !== undefined) formData.append('chunk_limit', chunkLimit.toString());
+        if (projectId !== undefined) formData.append('project_id', projectId);
+
+        const res = await fetch(`${baseUrl}/api/tts/scripts/${scriptId}`, {
+            method: 'PUT',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData
+        });
+        const data = await res.json();
+        return { data };
     },
     deleteScript: async (scriptId: string) => {
         const client = await getClientAsync();

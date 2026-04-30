@@ -144,7 +144,7 @@ no 3D rendering, no realistic skin, no western comic style
       "Seinen (mature, psychological)",
       "Isekai (fantasy world)",
       "Romance (emotional, soft)",
-      "Mecha (robots)",
+      // "Mecha (robots)",
       "Slice of Life (calm daily life)",
       "Fantasy / Adventure"
     ]

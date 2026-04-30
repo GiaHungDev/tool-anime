@@ -244,10 +244,10 @@ async function processInChunks<T>(
     return results;
 }
 
-export function TTSScriptsPage() {
+export function TTSScriptsPage({ defaultProjectName, defaultEpisode }: { defaultProjectName?: string, defaultEpisode?: string }) {
     const context = useContext(GlobalAudioContext);
     const globalPlayer = context?.globalPlayer;
-    const setGlobalPlayer = context?.setGlobalPlayer || (() => {});
+    const setGlobalPlayer = context?.setGlobalPlayer || (() => { });
     const userId = authService.getCurrentUserId();
     const [scripts, setScripts] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -273,6 +273,8 @@ export function TTSScriptsPage() {
     const [newScriptTitle, setNewScriptTitle] = useState('');
     const [newScriptLanguage, setNewScriptLanguage] = useState('Vietnamese');
     const [newScriptChunkLimit, setNewScriptChunkLimit] = useState(TTS_CHUNK_LIMIT);
+    const [newScriptProjectId, setNewScriptProjectId] = useState('');
+    const [ttsProjects, setTtsProjects] = useState<any[]>([]);
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
     // Filters
@@ -285,8 +287,23 @@ export function TTSScriptsPage() {
 
     const loadScripts = async () => {
         try {
-            const res = await api_tts.getScripts();
-            setScripts(res.data);
+            let pId = undefined;
+            const currentProjectStr = localStorage.getItem('current_project');
+            if (currentProjectStr) {
+                try {
+                    const p = JSON.parse(currentProjectStr);
+                    if (p && p.id) pId = p.id;
+                } catch(e){}
+            }
+            
+            const [resScripts, resProjects] = await Promise.all([
+                api_tts.getScripts(pId),
+                api_tts.getProjects().catch(() => ({ data: [] }))
+            ]);
+            setScripts(resScripts.data);
+            if (resProjects?.data && Array.isArray(resProjects.data)) {
+                setTtsProjects(resProjects.data);
+            }
         } catch (error) {
             toast.error("Lỗi khi tải danh sách Kịch bản");
         } finally {
@@ -319,7 +336,7 @@ export function TTSScriptsPage() {
                 setNewScriptLanguage('Vietnamese');
                 setNewScriptChunkLimit(TTS_CHUNK_LIMIT);
             } else {
-                const res = await api_tts.createScript(newScriptTitle.trim(), newScriptLanguage, newScriptChunkLimit);
+                const res = await api_tts.createScript(newScriptTitle.trim(), newScriptLanguage, newScriptChunkLimit, newScriptProjectId || undefined);
                 toast.success("Tạo thành công!", { id: loadToast });
                 setScripts([res.data, ...scripts]);
                 setSelectedScript(res.data);
@@ -379,7 +396,22 @@ export function TTSScriptsPage() {
                         <RefreshCw className="w-4 h-4" /> Tải Lại
                     </button>
                     <button
-                        onClick={() => { setEditingScriptId(null); setNewScriptTitle(''); setNewScriptLanguage('Vietnamese'); setShowAddScript(true); }}
+                        onClick={() => { 
+                            setEditingScriptId(null); 
+                            setNewScriptTitle(defaultEpisode || 'Tập 1'); 
+                            setNewScriptLanguage('Vietnamese'); 
+                            
+                            // Auto select current project if inside a workspace
+                            const currentProjectStr = localStorage.getItem('current_project');
+                            if (currentProjectStr) {
+                                try {
+                                    const p = JSON.parse(currentProjectStr);
+                                    if (p && p.id) setNewScriptProjectId(p.id);
+                                } catch(e){}
+                            }
+                            
+                            setShowAddScript(true); 
+                        }}
                         className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl font-bold transition-all shadow-lg"
                     >
                         <Plus className="w-4 h-4" /> Tạo Kịch Bản
@@ -503,6 +535,15 @@ export function TTSScriptsPage() {
                                     </select>
                                 </div>
                                 <div>
+                                    <label className="block text-sm font-medium text-slate-300 mb-1">Thuộc Dự Án</label>
+                                    <select value={newScriptProjectId} onChange={e => setNewScriptProjectId(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-emerald-500 transition-colors">
+                                        <option value="">-- Kịch bản độc lập --</option>
+                                        {ttsProjects.map(p => (
+                                            <option key={p.id} value={p.id} className="bg-slate-800">{p.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
                                     <label className="block text-sm font-medium text-slate-300 mb-1">Giới hạn ký tự mỗi câu</label>
                                     <div className="relative">
                                         <input type="number" min="1" max={MAX_TTS_LENGTH} value={newScriptChunkLimit} onChange={e => {
@@ -577,7 +618,7 @@ function ConfirmDialog({ title, message, onConfirm, onCancel, type = 'info', isL
 // EDITOR COMPONENT
 // ---------------------------------------------------------------------------------------------------------------------
 
-function ScriptEditor({ script, onBack, setConfirmDialog }: { script: any, onBack: () => void, setConfirmDialog: any }) {
+export function ScriptEditor({ script, onBack, setConfirmDialog, displayTitle }: { script: any, onBack?: () => void, setConfirmDialog: any, displayTitle?: string }) {
     const currentRole = localStorage.getItem('svc_role') || 'user';
     const currentUsername = localStorage.getItem('username') || '';
     const isOwner = true;
@@ -611,7 +652,7 @@ function ScriptEditor({ script, onBack, setConfirmDialog }: { script: any, onBac
     // Global Player from Context
     const context = useContext(GlobalAudioContext);
     const globalPlayer = context?.globalPlayer;
-    const setGlobalPlayer = context?.setGlobalPlayer || (() => {});
+    const setGlobalPlayer = context?.setGlobalPlayer || (() => { });
     const [autoPlayIndex, setAutoPlayIndex] = useState<number | null>(null);
     const [playAllModalOpen, setPlayAllModalOpen] = useState(false);
     const [autoPlayGap, setAutoPlayGap] = useState(500);
@@ -738,12 +779,12 @@ function ScriptEditor({ script, onBack, setConfirmDialog }: { script: any, onBac
 
         try {
             const res = await api_tts.importMasterScript(script.id, {
-                text: wizardText, 
-                character_voice_map: wizardVoiceMap, 
+                text: wizardText,
+                character_voice_map: wizardVoiceMap,
                 replace_missing_with_neutral: replaceMissingWithNeutral,
                 mode: wizardMode
             });
-            
+
             toast.success(`Đã thêm thành công ${res.data.inserted} câu thoại!`);
             setWizardOpen(false);
             setWizardText("");
@@ -934,18 +975,18 @@ function ScriptEditor({ script, onBack, setConfirmDialog }: { script: any, onBac
         const voice = voices.find((v: any) => v.id === sentence.voice_id);
         if (!voice && sentence.character !== 'Người kể chuyện' && sentence.character !== '') return "Giọng đọc không tồn tại";
         if (!voice) return null;
-        
+
         const isVoiceVox = voice.voice_type === 'pure_tts' || (voice.name && voice.name.includes('[VoiceVox]'));
-        
+
         if (sentence.emotion && sentence.emotion !== 'NEUTRAL' && sentence.emotion !== 'WHISPER') {
             const sample = voice.samples?.find((sm: any) => sm.emotion.toUpperCase() === sentence.emotion.toUpperCase());
-            
+
             if (!sample) return "Thiếu Audio mẫu cho cảm xúc này";
-            
+
             if (sample.text_transcript && sample.text_transcript.includes('[Lỗi:')) {
                 return `Lỗi mẫu giọng: ${sample.text_transcript.replace('[Lỗi: ', '').replace(']', '')}`;
             }
-            
+
             if (sample.is_active === false) {
                 if (sample.text_transcript && sample.text_transcript.includes('Đang nhận diện')) return "Mẫu giọng đang được AI nhận diện văn bản...";
                 return "Mẫu giọng chưa sẵn sàng (Inactive)";
@@ -992,10 +1033,10 @@ function ScriptEditor({ script, onBack, setConfirmDialog }: { script: any, onBac
         if (autoPlayIndex !== null && sentences[autoPlayIndex]) {
             const playingSentence = sentences[autoPlayIndex];
             const filteredIndex = filteredSentences.findIndex(s => s.id === playingSentence.id);
-            
+
             if (filteredIndex !== -1) {
                 const targetPage = Math.floor(filteredIndex / PAGE_SIZE) + 1;
-                
+
                 const scrollToElement = () => {
                     const el = document.getElementById(`sentence-${playingSentence.id}`);
                     if (el) {
@@ -1257,11 +1298,11 @@ function ScriptEditor({ script, onBack, setConfirmDialog }: { script: any, onBac
             const isVoiceVox = voice && (voice.voice_type === 'pure_tts' || (voice.name && voice.name.includes('[VoiceVox]')));
             const isMissing = !!(sentence.emotion && sentence.emotion !== 'NEUTRAL' && sentence.emotion !== 'WHISPER' && voice && !isVoiceVox && (!voice.samples || !voice.samples.some((sm: any) => sm.emotion.toUpperCase() === sentence.emotion.toUpperCase())));
             if (isMissing) {
-                toast.error("Câu thoại này gán cảm xúc nhưng Giọng đọc chưa có Audio mẫu cho cảm xúc đó (Báo đỏ ❗). Xin hãy thiết lập bù hoặc chuyển về Neutral!", {duration: 5000});
+                toast.error("Câu thoại này gán cảm xúc nhưng Giọng đọc chưa có Audio mẫu cho cảm xúc đó (Báo đỏ ❗). Xin hãy thiết lập bù hoặc chuyển về Neutral!", { duration: 5000 });
                 // Vẫn cho phép render nhưng sẽ fallback về Neutral ở backend
             }
         }
-        
+
         setIsProcessing(true);
         const loadToast = toast.loading("Đang đưa vào hàng đợi...");
         try {
@@ -1284,9 +1325,9 @@ function ScriptEditor({ script, onBack, setConfirmDialog }: { script: any, onBac
             if (!sentence) return false;
             return isSentenceMissingInfo(sentence);
         });
-        
+
         if (hasMissing) {
-            toast.error("Có một số câu thoại đã gán cảm xúc nhưng Giọng đọc chưa có Audio mẫu cho cảm xúc đó (Báo đỏ ❗). Xin hãy thiết lập bù mẫu giọng, nếu không AI sẽ tự động trả về Neutral!", {duration: 7000});
+            toast.error("Có một số câu thoại đã gán cảm xúc nhưng Giọng đọc chưa có Audio mẫu cho cảm xúc đó (Báo đỏ ❗). Xin hãy thiết lập bù mẫu giọng, nếu không AI sẽ tự động trả về Neutral!", { duration: 7000 });
         }
 
         openConfirm(
@@ -1409,7 +1450,7 @@ function ScriptEditor({ script, onBack, setConfirmDialog }: { script: any, onBac
                     <button onClick={onBack} className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-all shadow-md"><ChevronLeft className="w-5 h-5" /></button>
                     <div className="flex flex-col">
                         <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Đang chỉnh sửa kịch bản</span>
-                        <h2 className="text-xl font-bold text-white truncate max-w-[200px] md:max-w-md">{script.title}</h2>
+                        <h2 className="text-xl font-bold text-white truncate max-w-[200px] md:max-w-md">{displayTitle || script.title}</h2>
                         <div className="flex gap-2 text-[11px] font-bold mt-1 flex-wrap">
                             <span className="bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700 shadow-sm">Tổng: {statsTotal} câu</span>
                             <span className={`px-2 py-0.5 rounded border shadow-sm ${statsCompleted > 0 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>Đã Xong: {statsCompleted}</span>
@@ -1592,13 +1633,13 @@ function ScriptEditor({ script, onBack, setConfirmDialog }: { script: any, onBac
                                 <div className={`flex gap-3 items-stretch rounded-xl border p-3 md:p-4 transition-colors ${isSelected ? 'bg-indigo-500/10 border-indigo-500/50 shadow-[0_0_15px_rgba(99,102,241,0.15)]' : 'bg-[#151B2B] border-slate-700'}`}>
 
                                     {/* 1. CHECKBOX MẶC ĐỊNH BÊN TRÁI CÙNG */}
-<div className="w-8 flex flex-col items-center gap-1.5 pt-2 shrink-0" title="Chọn dòng này">
-                                            <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(sentence.id)} className="w-[18px] h-[18px] accent-emerald-500 rounded border-slate-600 cursor-pointer" />
-                                            <span className="text-[11px] text-slate-500 font-bold">#{sentences.findIndex((s: any) => s.id === sentence.id) + 1}</span>
-                                        </div>
+                                    <div className="w-8 flex flex-col items-center gap-1.5 pt-2 shrink-0" title="Chọn dòng này">
+                                        <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(sentence.id)} className="w-[18px] h-[18px] accent-emerald-500 rounded border-slate-600 cursor-pointer" />
+                                        <span className="text-[11px] text-slate-500 font-bold">#{sentences.findIndex((s: any) => s.id === sentence.id) + 1}</span>
+                                    </div>
 
-                                        
-{/* BÊN PHẢI: KHU VỰC HIỂN THỊ THÔNG TIN/TRẠNG THÁI */}
+
+                                    {/* BÊN PHẢI: KHU VỰC HIỂN THỊ THÔNG TIN/TRẠNG THÁI */}
                                     <div className="flex flex-col justify-center gap-3 bg-slate-800/80 p-3 rounded-xl border border-slate-700 shrink-0 w-[380px]">
 
                                         {/* Hàng 1: Giọng đọc & Cảm xúc */}
@@ -1607,9 +1648,9 @@ function ScriptEditor({ script, onBack, setConfirmDialog }: { script: any, onBac
                                                 <Mic className="w-4 h-4 text-emerald-400 shrink-0" />
                                                 {isOwner && sentence.voice_id && (
                                                     <button onClick={() => {
-                                                          setEditingVoiceId(sentence.voice_id);
-                                                          setEditingVoiceEmotion(isMissingSample ? sentence.emotion : null);
-                                                      }} className="p-1 rounded bg-slate-700/50 hover:bg-indigo-500 text-slate-400 hover:text-white transition-colors group flex items-center justify-center shrink-0 shadow-sm border border-transparent hover:border-indigo-400" title="Chỉnh sửa chi tiết Giọng ảo, Upload Audio Sample">
+                                                        setEditingVoiceId(sentence.voice_id);
+                                                        setEditingVoiceEmotion(isMissingSample ? sentence.emotion : null);
+                                                    }} className="p-1 rounded bg-slate-700/50 hover:bg-indigo-500 text-slate-400 hover:text-white transition-colors group flex items-center justify-center shrink-0 shadow-sm border border-transparent hover:border-indigo-400" title="Chỉnh sửa chi tiết Giọng ảo, Upload Audio Sample">
                                                         <Pencil className="w-3.5 h-3.5" />
                                                     </button>
                                                 )}
@@ -1734,102 +1775,102 @@ function ScriptEditor({ script, onBack, setConfirmDialog }: { script: any, onBac
                                         </div>
                                     </div>
 
-                                    
-{/* 3. TEXTAREA VÀ THỜI GIAN BÊN TAY PHẢI */}
-<div className="flex-1 flex flex-col gap-2 min-w-0">
-                                            <div className="flex-1 relative">
-                                                {sentence.character_name && (
-                                                    <div className="absolute -top-2.5 left-3 px-2 py-0.5 bg-indigo-600 text-white text-[10px] font-bold rounded shadow-md z-10 border border-indigo-400/50 uppercase tracking-wider">
-                                                        {sentence.character_name}
-                                                    </div>
+
+                                    {/* 3. TEXTAREA VÀ THỜI GIAN BÊN TAY PHẢI */}
+                                    <div className="flex-1 flex flex-col gap-2 min-w-0">
+                                        <div className="flex-1 relative">
+                                            {sentence.character_name && (
+                                                <div className="absolute -top-2.5 left-3 px-2 py-0.5 bg-indigo-600 text-white text-[10px] font-bold rounded shadow-md z-10 border border-indigo-400/50 uppercase tracking-wider">
+                                                    {sentence.character_name}
+                                                </div>
+                                            )}
+                                            <textarea
+                                                value={dirtyTexts[sentence.id] !== undefined ? dirtyTexts[sentence.id] : (sentence.text || "")}
+                                                onChange={(e) => {
+                                                    if (!isOwner) return;
+                                                    const newVal = e.target.value;
+                                                    if (newVal === sentence.text) {
+                                                        handleDiscardText(sentence.id);
+                                                    } else {
+                                                        setDirtyTexts(prev => ({ ...prev, [sentence.id]: newVal }));
+                                                    }
+                                                }}
+                                                onBlur={(e) => {
+                                                    if (!isOwner) return;
+                                                    const currentDirty = dirtyTexts[sentence.id];
+                                                    if (currentDirty !== undefined && currentDirty !== sentence.text) {
+                                                        openConfirm(
+                                                            "Thay đổi chưa lưu",
+                                                            "Bạn có muốn lưu lại nội dung vừa chỉnh sửa không?",
+                                                            () => handleSaveSentenceText(sentence.id, currentDirty),
+                                                            "info"
+                                                        );
+                                                    }
+                                                }}
+                                                readOnly={!isOwner}
+                                                className={`w-full bg-slate-900 border border-slate-600 rounded-lg p-3 pb-7 text-sm font-medium leading-relaxed text-slate-100 focus:border-indigo-500 focus:shadow-[0_0_10px_rgba(99,102,241,0.3)] resize-y overflow-y-auto min-h-[88px] transition-all ${!isOwner ? 'pointer-events-none' : ''}`}
+                                            />
+
+                                            <AnimatePresence>
+                                                {dirtyTexts[sentence.id] !== undefined && (
+                                                    <motion.button
+                                                        initial={{ opacity: 0, scale: 0.8, y: 10 }}
+                                                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                                                        exit={{ opacity: 0, scale: 0.8, y: 10 }}
+                                                        onClick={() => handleSaveSentenceText(sentence.id, dirtyTexts[sentence.id])}
+                                                        className="absolute top-2 right-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold rounded-lg shadow-xl border border-emerald-400/30 flex items-center gap-1 z-10"
+                                                    >
+                                                        <Save className="w-3 h-3" /> Lưu thay đổi
+                                                    </motion.button>
                                                 )}
-                                                <textarea
-                                                    value={dirtyTexts[sentence.id] !== undefined ? dirtyTexts[sentence.id] : (sentence.text || "")}
-                                                    onChange={(e) => {
-                                                        if (!isOwner) return;
-                                                        const newVal = e.target.value;
-                                                        if (newVal === sentence.text) {
-                                                            handleDiscardText(sentence.id);
-                                                        } else {
-                                                            setDirtyTexts(prev => ({ ...prev, [sentence.id]: newVal }));
-                                                        }
-                                                    }}
-                                                    onBlur={(e) => {
-                                                        if (!isOwner) return;
-                                                        const currentDirty = dirtyTexts[sentence.id];
-                                                        if (currentDirty !== undefined && currentDirty !== sentence.text) {
-                                                            openConfirm(
-                                                                "Thay đổi chưa lưu",
-                                                                "Bạn có muốn lưu lại nội dung vừa chỉnh sửa không?",
-                                                                () => handleSaveSentenceText(sentence.id, currentDirty),
-                                                                "info"
-                                                            );
-                                                        }
-                                                    }}
-                                                    readOnly={!isOwner}
-                                                    className={`w-full bg-slate-900 border border-slate-600 rounded-lg p-3 pb-7 text-sm font-medium leading-relaxed text-slate-100 focus:border-indigo-500 focus:shadow-[0_0_10px_rgba(99,102,241,0.3)] resize-y overflow-y-auto min-h-[88px] transition-all ${!isOwner ? 'pointer-events-none' : ''}`}
-                                                />
+                                            </AnimatePresence>
 
-                                                <AnimatePresence>
-                                                    {dirtyTexts[sentence.id] !== undefined && (
-                                                        <motion.button
-                                                            initial={{ opacity: 0, scale: 0.8, y: 10 }}
-                                                            animate={{ opacity: 1, scale: 1, y: 0 }}
-                                                            exit={{ opacity: 0, scale: 0.8, y: 10 }}
-                                                            onClick={() => handleSaveSentenceText(sentence.id, dirtyTexts[sentence.id])}
-                                                            className="absolute top-2 right-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold rounded-lg shadow-xl border border-emerald-400/30 flex items-center gap-1 z-10"
-                                                        >
-                                                            <Save className="w-3 h-3" /> Lưu thay đổi
-                                                        </motion.button>
-                                                    )}
-                                                </AnimatePresence>
-
-                                                <div className={`absolute bottom-2 right-3 text-[10px] font-mono font-bold tracking-wider ${sentence.text?.length >= MAX_TTS_LENGTH ? 'text-rose-400 drop-shadow-[0_0_3px_rgba(244,63,94,0.6)]' : 'text-slate-500'}`} title="Số lượng ký tự / Tối đa">
-                                                    {(dirtyTexts[sentence.id] !== undefined ? dirtyTexts[sentence.id].length : (sentence.text?.length || 0))} / {MAX_TTS_LENGTH}
-                                                </div>
-                                            </div>
-
-                                            {/* Thời gian hiển thị FULL Dưới Textarea */}
-                                            <div className="w-full flex items-center justify-between text-[11px] text-slate-500 font-mono tracking-tight px-1 mt-auto">
-                                                <span>Tạo: {sentence.created_at ? new Date(sentence.created_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : '--'}</span>
-                                                <div className="flex gap-3 items-center">
-                                                    {sentence.audio_duration ? <span className="text-fuchsia-400 font-bold">Thời lượng: {sentence.audio_duration.toFixed(2)}s</span> : null}
-                                                    {sentence.render_end_time && <span className="text-emerald-400/80 font-bold">Xong: {new Date(sentence.render_end_time).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })}</span>}
-                                                </div>
+                                            <div className={`absolute bottom-2 right-3 text-[10px] font-mono font-bold tracking-wider ${sentence.text?.length >= MAX_TTS_LENGTH ? 'text-rose-400 drop-shadow-[0_0_3px_rgba(244,63,94,0.6)]' : 'text-slate-500'}`} title="Số lượng ký tự / Tối đa">
+                                                {(dirtyTexts[sentence.id] !== undefined ? dirtyTexts[sentence.id].length : (sentence.text?.length || 0))} / {MAX_TTS_LENGTH}
                                             </div>
                                         </div>
-{/* BÊN PHẢI NGOÀI CÙNG: ACTIONS LỚN HƠN */}
-                                    {isOwner && (
-                                    <div className="flex flex-col shrink-0 gap-2 w-12">
-                                        {(isProcessing || sentence.status === 'Queued') ? (
-                                            <button onClick={() => handleCancelSentence(sentence.id)} className="flex-1 flex items-center justify-center bg-red-600/30 text-red-500 border border-red-500/50 hover:bg-red-500/50 hover:text-white rounded-xl transition-all shadow-md" title="Dừng Render">
-                                                <Square className="w-5 h-5" />
-                                            </button>
-                                        ) : (
-                                            <button onClick={() => handleRenderSentence(sentence.id)} disabled={isProcessing || !sentence.voice_id} className="flex-1 flex items-center justify-center bg-emerald-600/30 text-emerald-400 border border-emerald-500/50 hover:bg-emerald-500/50 hover:text-white rounded-xl disabled:opacity-20 disabled:grayscale transition-all shadow-md" title="Render Dòng Này">
-                                                <Cpu className="w-5 h-5" />
-                                            </button>
-                                        )}
-                                        <button onClick={() => handleAddSentenceQuick(sentence.order_index + 1, sentence.text, sentence.voice_id, sentence.emotion, sentence.speed, sentence.pitch)} className="flex-1 flex items-center justify-center bg-slate-700/80 text-cyan-400 border border-slate-600 hover:text-white hover:bg-cyan-600 rounded-xl transition-all shadow-md" title="Nhân bản (Duplicate)">
-                                            <Copy className="w-5 h-5" />
-                                        </button>
-                                        <button onClick={() => handleDeleteSentence(sentence.id)} className="flex-1 flex items-center justify-center bg-slate-700/80 text-rose-400 border border-slate-600 hover:text-white hover:bg-rose-600 rounded-xl transition-all shadow-md" title="Xóa bỏ dứt điểm">
-                                            <Trash2 className="w-5 h-5" />
-                                        </button>
+
+                                        {/* Thời gian hiển thị FULL Dưới Textarea */}
+                                        <div className="w-full flex items-center justify-between text-[11px] text-slate-500 font-mono tracking-tight px-1 mt-auto">
+                                            <span>Tạo: {sentence.created_at ? new Date(sentence.created_at).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : '--'}</span>
+                                            <div className="flex gap-3 items-center">
+                                                {sentence.audio_duration ? <span className="text-fuchsia-400 font-bold">Thời lượng: {sentence.audio_duration.toFixed(2)}s</span> : null}
+                                                {sentence.render_end_time && <span className="text-emerald-400/80 font-bold">Xong: {new Date(sentence.render_end_time).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })}</span>}
+                                            </div>
+                                        </div>
                                     </div>
+                                    {/* BÊN PHẢI NGOÀI CÙNG: ACTIONS LỚN HƠN */}
+                                    {isOwner && (
+                                        <div className="flex flex-col shrink-0 gap-2 w-12">
+                                            {(isProcessing || sentence.status === 'Queued') ? (
+                                                <button onClick={() => handleCancelSentence(sentence.id)} className="flex-1 flex items-center justify-center bg-red-600/30 text-red-500 border border-red-500/50 hover:bg-red-500/50 hover:text-white rounded-xl transition-all shadow-md" title="Dừng Render">
+                                                    <Square className="w-5 h-5" />
+                                                </button>
+                                            ) : (
+                                                <button onClick={() => handleRenderSentence(sentence.id)} disabled={isProcessing || !sentence.voice_id} className="flex-1 flex items-center justify-center bg-emerald-600/30 text-emerald-400 border border-emerald-500/50 hover:bg-emerald-500/50 hover:text-white rounded-xl disabled:opacity-20 disabled:grayscale transition-all shadow-md" title="Render Dòng Này">
+                                                    <Cpu className="w-5 h-5" />
+                                                </button>
+                                            )}
+                                            <button onClick={() => handleAddSentenceQuick(sentence.order_index + 1, sentence.text, sentence.voice_id, sentence.emotion, sentence.speed, sentence.pitch)} className="flex-1 flex items-center justify-center bg-slate-700/80 text-cyan-400 border border-slate-600 hover:text-white hover:bg-cyan-600 rounded-xl transition-all shadow-md" title="Nhân bản (Duplicate)">
+                                                <Copy className="w-5 h-5" />
+                                            </button>
+                                            <button onClick={() => handleDeleteSentence(sentence.id)} className="flex-1 flex items-center justify-center bg-slate-700/80 text-rose-400 border border-slate-600 hover:text-white hover:bg-rose-600 rounded-xl transition-all shadow-md" title="Xóa bỏ dứt điểm">
+                                                <Trash2 className="w-5 h-5" />
+                                            </button>
+                                        </div>
                                     )}
                                 </div>
 
                                 {/* In-between Add Trigger */}
                                 {isOwner && (
                                     <div className="absolute -bottom-[0.375rem] left-0 right-0 h-3 flex justify-center items-center opacity-0 hover:opacity-100 z-50">
-                                    <div className="absolute w-[95%] h-[1px] bg-emerald-500/60 shadow-[0_0_10px_rgba(16,185,129,1)]" />
-                                    <button onClick={() => handleAddSentenceQuick(sentence.order_index + 1)} className="bg-emerald-500 text-white p-1 rounded-full relative z-20 shadow-xl hover:bg-emerald-400 hover:scale-110 transition-transform" title="Chèn câu tiếp theo">
-                                        <Plus className="w-3 h-3" />
-                                    </button>
+                                        <div className="absolute w-[95%] h-[1px] bg-emerald-500/60 shadow-[0_0_10px_rgba(16,185,129,1)]" />
+                                        <button onClick={() => handleAddSentenceQuick(sentence.order_index + 1)} className="bg-emerald-500 text-white p-1 rounded-full relative z-20 shadow-xl hover:bg-emerald-400 hover:scale-110 transition-transform" title="Chèn câu tiếp theo">
+                                            <Plus className="w-3 h-3" />
+                                        </button>
                                     </div>
-                                    )}
-                                </div>
+                                )}
+                            </div>
                         )
                     })}
                     {filteredSentences.length === 0 && (
@@ -2069,13 +2110,13 @@ function ScriptEditor({ script, onBack, setConfirmDialog }: { script: any, onBac
                 {editingVoiceId && (
                     <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
                         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="w-full max-w-3xl max-h-[90vh] bg-[#0F1423] rounded-2xl shadow-2xl border border-slate-700 relative flex flex-col overflow-hidden">
-                                <div className="flex justify-between items-center px-5 py-3 border-b border-white/10 shrink-0 bg-[#0B0F19] shadow-sm z-30">
-                                    <h3 className="text-slate-300 font-bold text-[13px] tracking-wide uppercase">Hồ sơ Giọng đọc (Voice Profile)</h3>
-                                    <button onClick={() => { setEditingVoiceId(null); setGlobalPlayer(null); }} className="text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 p-1.5 rounded-lg transition-colors"><X className="w-5 h-5" /></button>
-                                </div>
-                                <div className="flex-1 overflow-y-auto custom-scrollbar bg-[#0F1423]">
-                                  {voices.find(v => v.id === editingVoiceId) ? (
-                                    <VoiceCard voice={voices.find(v => v.id === editingVoiceId)!} expectedEmotion={editingVoiceEmotion} reload={loadVoices} onOpenDetail={() => {}} setConfirmDialog={(obj: any) => {
+                            <div className="flex justify-between items-center px-5 py-3 border-b border-white/10 shrink-0 bg-[#0B0F19] shadow-sm z-30">
+                                <h3 className="text-slate-300 font-bold text-[13px] tracking-wide uppercase">Hồ sơ Giọng đọc (Voice Profile)</h3>
+                                <button onClick={() => { setEditingVoiceId(null); setGlobalPlayer(null); }} className="text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 p-1.5 rounded-lg transition-colors"><X className="w-5 h-5" /></button>
+                            </div>
+                            <div className="flex-1 overflow-y-auto custom-scrollbar bg-[#0F1423]">
+                                {voices.find(v => v.id === editingVoiceId) ? (
+                                    <VoiceCard voice={voices.find(v => v.id === editingVoiceId)!} expectedEmotion={editingVoiceEmotion} reload={loadVoices} onOpenDetail={() => { }} setConfirmDialog={(obj: any) => {
                                         if (!obj) {
                                             setConfirmDialog((prev: any) => ({ ...prev, show: false }));
                                         } else {
@@ -2101,8 +2142,8 @@ function ScriptEditor({ script, onBack, setConfirmDialog }: { script: any, onBac
                                         Không tìm thấy giọng này. Vui lòng tắt và mở lại.
                                     </div>
                                 )}
-                                </div>
-                            </motion.div>
+                            </div>
+                        </motion.div>
                     </div>
                 )}
             </AnimatePresence>

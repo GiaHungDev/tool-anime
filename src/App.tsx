@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { User, LogOut, FileText, Blocks, Users, Image as ImageIcon, Film, ChevronLeft, ChevronRight, Key, Mic, FileAudio, Play, Pause, X, Volume2 } from 'lucide-react'
+import { User, LogOut, FileText, Blocks, Users, Image as ImageIcon, Film, ChevronLeft, ChevronRight, Key, Mic, FileAudio, Play, Pause, X, Volume2, FolderOpen } from 'lucide-react'
 import NanoBananaProMode from './components/NanoBananaProMode'
 import IngredientToVideoMode from './components/IngredientToVideoMode'
 import TextToVideoMode from './components/TextToVideoMode'
@@ -10,8 +10,12 @@ import { TTSVoicesPage } from './components/TTSVoicesMode'
 import { TTSScriptsPage } from './components/TTSScriptsMode'
 import { GlobalAudioContext } from './contexts/GlobalAudioContext';
 import { Toaster } from 'react-hot-toast';
+import { useProject } from './contexts/ProjectContext';
+import ProjectDashboard from './components/ProjectDashboard';
+import ProjectWorkspace from './components/ProjectWorkspace';
 
 function App() {
+  const { currentProject, setCurrentProject } = useProject();
   const [activeMode, setActiveMode] = useState('nanobanana');
   const [auth, setAuth] = useState(authService.getLoginStatus());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -60,15 +64,35 @@ function App() {
     <GlobalAudioContext.Provider value={{ globalPlayer, setGlobalPlayer }}>
       <Toaster position="top-right" />
       {!auth.isLoggedIn && <LoginModal onLoginSuccess={handleLoginSuccess} />}
-      <div className="flex flex-col min-h-screen space-bg text-gray-100 font-sans">
+      <div className="flex flex-col h-screen overflow-hidden space-bg text-gray-100 font-sans">
         {/* Header */}
         <header className="flex items-center justify-between px-6 py-4 bg-black/20 backdrop-blur-md border-b border-white/10 shrink-0 z-20">
           <div className="flex items-center">
-            <h1 className="text-3xl font-black tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-orange-300 via-fuchsia-400 to-purple-400 uppercase">
+            <h1 className="text-3xl font-black tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-orange-300 via-fuchsia-400 to-purple-400 uppercase cursor-pointer" onClick={() => setCurrentProject(null)}>
               FLOW AI
             </h1>
           </div>
+          {currentProject && (
+            <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-3 bg-white/5 border border-white/10 px-4 py-2 rounded-full backdrop-blur-md">
+              <span className="text-gray-400 text-sm">Dự án:</span>
+              <span className="text-fuchsia-300 font-bold">{currentProject.name}</span>
+              <div className="w-px h-4 bg-white/20 mx-1"></div>
+              <button onClick={() => setCurrentProject(null)} className="text-xs text-gray-400 hover:text-white transition-colors flex items-center gap-1.5 bg-white/5 hover:bg-white/10 px-2.5 py-1.5 rounded-lg border border-white/5">
+                <FolderOpen size={14} /> Chọn dự án khác
+              </button>
+            </div>
+          )}
           <div className="flex items-center space-x-6">
+            <div className="flex items-center space-x-2 bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 focus-within:border-fuchsia-500/50 transition-colors hidden sm:flex">
+              <Key size={16} className="text-gray-400" />
+              <input 
+                type="password" 
+                value={globalApiKey}
+                onChange={(e) => handleApiKeyChange(e.target.value)}
+                placeholder="Gemini API Key"
+                className="bg-transparent text-sm text-gray-200 focus:outline-none w-28 focus:w-48 transition-all"
+              />
+            </div>
             <div className="flex items-center space-x-3 cursor-pointer hover:bg-white/10 px-3 py-2 rounded-lg transition-colors border border-transparent hover:border-white/10">
               <div className="bg-purple-900/50 p-2 rounded-full text-purple-300">
                 <User size={20} />
@@ -83,149 +107,13 @@ function App() {
         </header>
 
         {/* Body Area */}
-        <div className="flex flex-1 overflow-hidden relative z-10">
-          {/* Sidebar (Approx 25%) */}
-          <aside className={`bg-black/20 backdrop-blur-md border-r border-white/10 overflow-hidden shrink-0 flex flex-col shadow-xl z-20 transition-all duration-300 ease-in-out ${isSidebarCollapsed ? 'w-[88px] p-3' : 'w-[280px] p-4'}`}>
-            <div className="flex-1 flex flex-col overflow-y-auto overflow-x-hidden pr-2 -mr-2 pb-4 min-h-0">
-              <div className={`flex items-center mb-6 w-full shrink-0 transition-all duration-300 ${isSidebarCollapsed ? 'justify-center mt-2' : 'justify-between px-2'}`}>
-              <div className={`text-xs font-semibold text-purple-300/70 uppercase tracking-wider whitespace-nowrap overflow-hidden transition-all duration-300 ${isSidebarCollapsed ? 'max-w-0 opacity-0' : 'max-w-[200px] opacity-100'}`}>
-                AI GENERATION
-              </div>
-              <button
-                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors shrink-0"
-                title={isSidebarCollapsed ? "Mở rộng" : "Thu gọn"}
-              >
-                {isSidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-              </button>
-            </div>
-            <nav className="flex flex-col space-y-2 w-full">
-              <button
-                onClick={() => setActiveMode('text-to-video')}
-                title={isSidebarCollapsed ? "Text to video" : ""}
-                className={`flex items-center rounded-xl transition-all duration-300 group border ${isSidebarCollapsed ? 'justify-center p-3 w-[64px] mx-auto' : 'px-4 py-3.5 w-full'} ${activeMode === 'text-to-video' ? 'bg-white/15 border-purple-400/50' : 'hover:bg-white/10 border-transparent hover:border-purple-400/30'}`}
-              >
-                <div className="shrink-0 flex items-center justify-center">
-                  <FileText className={`group-hover:text-fuchsia-300 transition-colors ${activeMode === 'text-to-video' ? 'text-fuchsia-300' : 'text-purple-400'}`} size={22} />
-                </div>
-                <span className={`font-medium whitespace-nowrap overflow-hidden transition-all duration-300 ${isSidebarCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[200px] opacity-100 ml-3'}`}>Text to video</span>
-              </button>
-
-              <button
-                onClick={() => setActiveMode('ingredients-to-video')}
-                title={isSidebarCollapsed ? "Ingredients to Video" : ""}
-                className={`flex items-center rounded-xl transition-all duration-300 group border ${isSidebarCollapsed ? 'justify-center p-3 w-[64px] mx-auto' : 'px-4 py-3.5 w-full'} ${activeMode === 'ingredients-to-video' ? 'bg-white/15 border-purple-400/50' : 'hover:bg-white/10 border-transparent hover:border-purple-400/30'}`}
-              >
-                <div className="shrink-0 flex items-center justify-center">
-                  <Blocks className={`group-hover:text-fuchsia-300 transition-colors ${activeMode === 'ingredients-to-video' ? 'text-fuchsia-300' : 'text-purple-400/70'}`} size={22} />
-                </div>
-                <span className={`font-medium whitespace-nowrap overflow-hidden transition-all duration-300 ${isSidebarCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[200px] opacity-100 ml-3'}`}>Ingredients to Video</span>
-              </button>
-
-              <button
-                onClick={() => setActiveMode('nanobanana')}
-                title={isSidebarCollapsed ? "Tạo ảnh nhân vật" : ""}
-                className={`flex items-center rounded-xl transition-all duration-300 group border relative overflow-hidden ${isSidebarCollapsed ? 'justify-center p-3 w-[64px] mx-auto' : 'px-4 py-3.5 w-full'} ${activeMode === 'nanobanana' ? 'bg-indigo-900/40 border-indigo-400/50' : 'hover:bg-indigo-900/30 border-transparent hover:border-indigo-400/30'}`}
-              >
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-indigo-400/10 to-transparent -translate-x-full group-hover:animate-shine"></div>
-                <div className="shrink-0 flex items-center justify-center relative z-10">
-                  <Users className="text-yellow-400 drop-shadow-[0_0_8px_rgba(250,204,21,0.5)]" size={22} />
-                </div>
-                <span className={`font-medium bg-clip-text text-transparent bg-gradient-to-r from-gray-200 to-gray-300 group-hover:from-orange-300 group-hover:to-fuchsia-300 whitespace-nowrap overflow-hidden transition-all duration-300 relative z-10 ${isSidebarCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[200px] opacity-100 ml-3'}`}>Tạo ảnh nhân vật</span>
-              </button>
-
-
-              <button
-                onClick={() => setActiveMode('auto-merge')}
-                title={isSidebarCollapsed ? "Ghép video tự động" : ""}
-                className={`flex items-center rounded-xl transition-all duration-300 group border relative overflow-hidden ${isSidebarCollapsed ? 'justify-center p-3 w-[64px] mx-auto' : 'px-4 py-3.5 w-full'} ${activeMode === 'auto-merge' ? 'bg-blue-900/40 border-blue-400/50' : 'hover:bg-blue-900/30 border-transparent hover:border-blue-400/30'}`}
-              >
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-blue-400/10 to-transparent -translate-x-full group-hover:animate-shine"></div>
-                <div className="shrink-0 flex items-center justify-center relative z-10">
-                  <Film className={`transition-colors ${activeMode === 'auto-merge' ? 'text-blue-400 drop-shadow-[0_0_8px_rgba(96,165,250,0.5)]' : 'text-purple-400/70 group-hover:text-blue-400 group-hover:drop-shadow-[0_0_8px_rgba(96,165,250,0.5)]'}`} size={22} />
-                </div>
-                <span className={`font-medium bg-clip-text text-transparent bg-gradient-to-r from-gray-200 to-gray-300 group-hover:from-blue-300 group-hover:to-cyan-300 whitespace-nowrap overflow-hidden transition-all duration-300 relative z-10 ${isSidebarCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[200px] opacity-100 ml-3'}`}>Ghép video tự động</span>
-              </button>
-
-              <button
-                onClick={() => setActiveMode('tts-voices')}
-                title={isSidebarCollapsed ? "Kho Nhân vật" : ""}
-                className={`flex items-center rounded-xl transition-all duration-300 group border relative overflow-hidden ${isSidebarCollapsed ? 'justify-center p-3 w-[64px] mx-auto' : 'px-4 py-3.5 w-full'} ${activeMode === 'tts-voices' ? 'bg-orange-900/40 border-orange-400/50' : 'hover:bg-orange-900/30 border-transparent hover:border-orange-400/30'}`}
-              >
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-orange-400/10 to-transparent -translate-x-full group-hover:animate-shine"></div>
-                <div className="shrink-0 flex items-center justify-center relative z-10">
-                  <User className={`transition-colors ${activeMode === 'tts-voices' ? 'text-orange-400 drop-shadow-[0_0_8px_rgba(251,146,60,0.5)]' : 'text-purple-400/70 group-hover:text-orange-400 group-hover:drop-shadow-[0_0_8px_rgba(251,146,60,0.5)]'}`} size={22} />
-                </div>
-                <span className={`font-medium bg-clip-text text-transparent bg-gradient-to-r from-gray-200 to-gray-300 group-hover:from-orange-300 group-hover:to-orange-400 whitespace-nowrap overflow-hidden transition-all duration-300 relative z-10 ${isSidebarCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[200px] opacity-100 ml-3'}`}>Kho Nhân vật</span>
-              </button>
-
-              <button
-                onClick={() => setActiveMode('tts-scripts')}
-                title={isSidebarCollapsed ? "Kịch bản TTS" : ""}
-                className={`flex items-center rounded-xl transition-all duration-300 group border relative overflow-hidden ${isSidebarCollapsed ? 'justify-center p-3 w-[64px] mx-auto' : 'px-4 py-3.5 w-full'} ${activeMode === 'tts-scripts' ? 'bg-green-900/40 border-green-400/50' : 'hover:bg-green-900/30 border-transparent hover:border-green-400/30'}`}
-              >
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-green-400/10 to-transparent -translate-x-full group-hover:animate-shine"></div>
-                <div className="shrink-0 flex items-center justify-center relative z-10">
-                  <FileAudio className={`transition-colors ${activeMode === 'tts-scripts' ? 'text-green-400 drop-shadow-[0_0_8px_rgba(74,222,128,0.5)]' : 'text-purple-400/70 group-hover:text-green-400 group-hover:drop-shadow-[0_0_8px_rgba(74,222,128,0.5)]'}`} size={22} />
-                </div>
-                <span className={`font-medium bg-clip-text text-transparent bg-gradient-to-r from-gray-200 to-gray-300 group-hover:from-green-300 group-hover:to-green-400 whitespace-nowrap overflow-hidden transition-all duration-300 relative z-10 ${isSidebarCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[200px] opacity-100 ml-3'}`}>Kịch bản TTS</span>
-              </button>
-            </nav>
-
-            {/* Nhập API Key ngay dưới Menu */}
-            <div className={`transition-all duration-300 w-full ${isSidebarCollapsed ? 'opacity-0 h-0 overflow-hidden m-0 p-0' : 'opacity-100 mt-6'}`}>
-              <div className="border-t border-white/10 pt-6">
-                <div className="flex items-center gap-2 mb-3 px-2">
-                  <Key size={14} className="text-purple-300/70" />
-                  <span className="text-xs font-semibold text-purple-300/70 uppercase tracking-wider">GEMINI API KEY</span>
-                </div>
-                <div className="relative group w-full overflow-hidden rounded-xl bg-black/20 hover:bg-white/5 border border-white/10 focus-within:border-purple-400/50 focus-within:bg-white/10 transition-all duration-300 shadow-inner">
-                  <input
-                    type="password"
-                    value={globalApiKey}
-                    onChange={(e) => handleApiKeyChange(e.target.value)}
-                    className="w-full bg-transparent px-4 py-3.5 text-sm font-medium text-white outline-none relative z-10"
-                  />
-                  {!globalApiKey && (
-                    <div className="absolute inset-y-0 left-4 right-2 max-w-full overflow-hidden flex items-center pointer-events-none z-0 mask-image-fade">
-                      <span className="text-white/50 text-[13px] whitespace-nowrap animate-marquee-placeholder">
-                        Nhập api key bắt buộc để sử dụng (Sao chép ý tưởng)
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+        {!currentProject ? (
+          <ProjectDashboard />
+        ) : (
+          <div className="flex-1 overflow-hidden relative z-10 flex flex-col w-full">
+            <ProjectWorkspace />
           </div>
-        </aside>
-
-          {/* Main Content (Approx 75%) */}
-          <main key={auth.isLoggedIn ? 'in' : 'out'} className="flex-1 p-6 overflow-y-auto bg-black/10 flex flex-col">
-            {activeMode === 'nanobanana' ? (
-              <NanoBananaProMode />
-            ) : activeMode === 'ingredients-to-video' ? (
-              <IngredientToVideoMode />
-            ) : activeMode === 'text-to-video' ? (
-              <TextToVideoMode />
-            ) : activeMode === 'auto-merge' ? (
-              <AutoMergeVideoMode />
-            ) : activeMode === 'tts-voices' ? (
-              <TTSVoicesPage />
-            ) : activeMode === 'tts-scripts' ? (
-              <TTSScriptsPage />
-            ) : (
-              <div className="max-w-5xl mx-auto h-full w-full flex flex-col rounded-3xl border border-white/10 bg-black/20 backdrop-blur-xl shadow-2xl items-center justify-center text-center p-12 relative overflow-hidden">
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-fuchsia-500/10 blur-[100px] rounded-full pointer-events-none"></div>
-
-                <div className="bg-white/5 border border-white/10 p-5 rounded-full shadow-[0_0_30px_rgba(192,132,252,0.15)] mb-6 relative z-10 backdrop-blur-md">
-                  <FileText className="text-fuchsia-300" size={36} />
-                </div>
-                <h2 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-200 to-fuchsia-100 mb-3 relative z-10">Chế độ đang được chọn</h2>
-                <p className="text-purple-200/60 max-w-md relative z-10 text-lg">Khu vực này sẽ hiển thị các công cụ và cấu hình tương ứng với chế độ được lựa chọn ở thanh menu bên trái.</p>
-              </div>
-            )}
-          </main>
-        </div>
+        )}
       </div>
       
       {/* Global Audio Player UI */}

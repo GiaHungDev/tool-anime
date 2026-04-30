@@ -17,7 +17,41 @@ export const fetchWithAuth = async (url: string, options: any = {}) => {
   if (token) headers['Authorization'] = `Bearer ${token}`;
   if (localId) headers['x-owner-id'] = localId;
 
-  return fetch(url, { ...options, headers });
+  let finalUrl = url;
+  let finalOptions = { ...options, headers };
+
+  const projectStr = localStorage.getItem('current_project');
+  if (projectStr) {
+    try {
+      const project = JSON.parse(projectStr);
+      if (project && project.id) {
+        // Append to URL for GET
+        if (!options.method || options.method.toUpperCase() === 'GET') {
+          const urlObj = new URL(finalUrl, window.location.origin);
+          if (!urlObj.searchParams.has('projectId')) {
+            urlObj.searchParams.append('projectId', project.id);
+            finalUrl = urlObj.toString();
+          }
+        }
+        // Append to Body for POST/PATCH
+        else if (['POST', 'PATCH', 'PUT'].includes(options.method.toUpperCase())) {
+          if (typeof finalOptions.body === 'string') {
+            try {
+              const parsedBody = JSON.parse(finalOptions.body);
+              if (typeof parsedBody === 'object' && !parsedBody.projectId) {
+                parsedBody.projectId = project.id;
+                finalOptions.body = JSON.stringify(parsedBody);
+              }
+            } catch (e) {
+              // Body is not JSON
+            }
+          }
+        }
+      }
+    } catch (e) { }
+  }
+
+  return fetch(finalUrl, finalOptions);
 };
 
 // Hàm đóng vai trò như verifyAndBindDevice / saveAccountInfo của Firebase

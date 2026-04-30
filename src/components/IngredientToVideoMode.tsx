@@ -106,7 +106,11 @@ const getVoiceAvatarUrl = (voice: any) => {
   return null;
 };
 
-export default function IngredientToVideoMode() {
+export interface IngredientToVideoModeProps {
+  hidePromptConfig?: boolean;
+}
+
+export default function IngredientToVideoMode({ hidePromptConfig = false }: IngredientToVideoModeProps = {}) {
   const context = useContext(GlobalAudioContext);
   const globalPlayer = context?.globalPlayer;
   const setGlobalPlayer = context?.setGlobalPlayer || (() => { });
@@ -432,7 +436,9 @@ export default function IngredientToVideoMode() {
   const [isSaving, setIsSaving] = useState(false);
   const [isRefreshingSentences, setIsRefreshingSentences] = useState(false);
   const [mergingSentences, setMergingSentences] = useState<Record<string, boolean>>({});
+  const [syncingSentences, setSyncingSentences] = useState<Record<string, boolean>>({});
   const [isConvertingAll, setIsConvertingAll] = useState<Record<string, boolean>>({});
+  const [isSyncingAll, setIsSyncingAll] = useState<Record<string, boolean>>({});
 
   // Polling for sentences in Audio Mode
   useEffect(() => {
@@ -590,7 +596,7 @@ export default function IngredientToVideoMode() {
     const meta = parseMetadata(row.metadata);
     const projectName = meta.projectName || 'Du_An_Khac';
 
-    setMergingSentences(prev => ({ ...prev, [sentenceId]: true }));
+    setSyncingSentences(prev => ({ ...prev, [sentenceId]: true }));
 
     try {
       const cleanProjectName = projectName.replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_');
@@ -625,7 +631,7 @@ export default function IngredientToVideoMode() {
       setShowErrorToast({ show: true, message: `Lỗi kết nối: ${e.message}` });
       setTimeout(() => setShowErrorToast(prev => ({ ...prev, show: false })), 3000);
     } finally {
-      setMergingSentences(prev => ({ ...prev, [sentenceId]: false }));
+      setSyncingSentences(prev => ({ ...prev, [sentenceId]: false }));
     }
   };
 
@@ -746,6 +752,99 @@ export default function IngredientToVideoMode() {
     setIsConvertingAll(prev => ({ ...prev, [projectName]: false }));
     if (successCount > 0) fetchImages();
     setSuccessToastMessage(`Đã hoàn tất chuyển đổi giọng cho ${successCount}/${tasks.length} video!`);
+    setShowSuccessToast(true);
+    setTimeout(() => setShowSuccessToast(false), 4000);
+  };
+
+  const handleSyncMergeVoiceAllProject = async (projectName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const rows = groupedData[projectName] || [];
+    const allProjectSentences = getSentencesArray(projectName);
+
+    const tasks: { videoId: number, sentenceId: string, videoUrl: string, audioUrl: string }[] = [];
+
+    for (const row of rows) {
+      if (!(row.videoURL || row.result || row.result_image || row.s3Key)) continue;
+
+      const meta = parseMetadata(row.metadata);
+      const sceneIndex = meta.sceneIndex;
+
+      let sentences = [];
+      if (meta.sentenceStartIndex !== undefined && meta.sentenceCount !== undefined) {
+        sentences = allProjectSentences.filter((s: any) => s.order_index >= meta.sentenceStartIndex && s.order_index < meta.sentenceStartIndex + meta.sentenceCount);
+      } else {
+        sentences = allProjectSentences.filter((s: any) => s.mode === `ultimate-scene-${sceneIndex}`);
+        if (sentences.length === 0 && allProjectSentences.length > 0 && sceneIndex === 0) {
+          sentences = allProjectSentences;
+        }
+      }
+
+      for (const s of sentences) {
+        if (s.audioPath || s.status?.toLowerCase() === 'completed') {
+          const resultVid = row.videoURL || row.result || row.result_image || row.s3Key;
+          let vUrl = '';
+          if (typeof resultVid === 'string') {
+            try {
+              const parsed = JSON.parse(resultVid);
+              vUrl = resolveImageUrl(parsed.url || parsed.s3Key || resultVid);
+            } catch { vUrl = resolveImageUrl(resultVid); }
+          } else if (Array.isArray(resultVid)) {
+            vUrl = resolveImageUrl(resultVid[0]);
+          } else { vUrl = resolveImageUrl(resultVid); }
+
+          if (!vUrl.startsWith('http')) vUrl = vUrl.startsWith('/') ? `${window.location.origin}${vUrl}` : vUrl;
+
+          tasks.push({ videoId: row.id, sentenceId: s.id, videoUrl: vUrl, audioUrl: api_tts.getStreamUrl(s.id) });
+          break;
+        }
+      }
+    }
+
+    if (tasks.length === 0) {
+      setShowErrorToast({ show: true, message: 'Không có Video & Audio nào thoả điều kiện Ghép giọng!' });
+      setTimeout(() => setShowErrorToast({ show: false, message: '' }), 3000);
+      return;
+    }
+
+    setIsSyncingAll(prev => ({ ...prev, [projectName]: true }));
+    let successCount = 0;
+
+    for (const task of tasks) {
+      setSyncingSentences(prev => ({ ...prev, [task.sentenceId]: true }));
+      const cleanProjectName = projectName.replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_');
+      const outputPath = `C:\\${cleanProjectName}\\video_${task.videoId}.mp4`;
+
+      try {
+        const response = await fetchWithAuth(`${API_URL}/tts/sync-merge-voice`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            videoUrl: task.videoUrl,
+            targetAudioUrl: task.audioUrl,
+            outputPath: outputPath
+          })
+        });
+
+        const resData = await response.json();
+        if (response.ok && resData.success) {
+          successCount++;
+          await fetchWithAuth(`${API_URL}/veo3/video/${task.videoId}/video-url`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ videoURL: outputPath })
+          });
+          await new Promise(r => setTimeout(r, 1000));
+        }
+      } catch (err) {
+        console.error('Merge voice failed for', task.videoId, err);
+      } finally {
+        setSyncingSentences(prev => ({ ...prev, [task.sentenceId]: false }));
+      }
+    }
+
+    setIsSyncingAll(prev => ({ ...prev, [projectName]: false }));
+    if (successCount > 0) fetchImages();
+    setSuccessToastMessage(`Đã ghép giọng thành công ${successCount}/${tasks.length} video!`);
     setShowSuccessToast(true);
     setTimeout(() => setShowSuccessToast(false), 4000);
   };
@@ -1240,6 +1339,26 @@ export default function IngredientToVideoMode() {
       return;
     }
 
+    const missingVoiceChars = new Set<string>();
+    storyBoards.forEach(sb => {
+      if (sb.dialogues) {
+        sb.dialogues.forEach(dlg => {
+          if (dlg.characterName && dlg.characterName.toLowerCase() !== 'người kể chuyện') {
+            const voice = findVoiceForCharacter(dlg.characterName, dlg.voiceId);
+            if (!voice) {
+              missingVoiceChars.add(dlg.characterName);
+            }
+          }
+        });
+      }
+    });
+
+    if (missingVoiceChars.size > 0) {
+      if (!window.confirm(`Các nhân vật sau chưa được gán Giọng đọc: ${Array.from(missingVoiceChars).join(', ')}.\nBạn vẫn muốn tiếp tục? (Các câu thoại của nhân vật này sẽ được đưa vào Kịch bản nhưng chưa có âm thanh)`)) {
+        return;
+      }
+    }
+
     setIsSaving(true);
     let successCount = 0;
     const successfulIds = new Set<string>();
@@ -1247,6 +1366,22 @@ export default function IngredientToVideoMode() {
     let ttsScriptId = '';
     let orderCounter = 0;
     const hasAnyDialogue = storyBoards.some(sb => sb.dialogues && sb.dialogues.length > 0);
+    
+    // Tự động tạo hoặc lấy TTS Project ID
+    let currentTtsProjectId = '';
+    try {
+      const pName = projectName.trim();
+      const ttsProjectsRes = await api_tts.getProjects();
+      const existingTtsProject = Array.isArray(ttsProjectsRes.data) ? ttsProjectsRes.data.find((p: any) => p.name === pName) : null;
+      if (existingTtsProject) {
+        currentTtsProjectId = existingTtsProject.id;
+      } else {
+        const newTtsProject = await api_tts.createProject(pName);
+        if (newTtsProject?.id) currentTtsProjectId = newTtsProject.id;
+      }
+    } catch (e) {
+      console.error('Lỗi khi lấy/tạo TTS Project', e);
+    }
 
     if (hasAnyDialogue) {
       try {
@@ -1258,7 +1393,7 @@ export default function IngredientToVideoMode() {
         if (existingScript) {
           ttsScriptId = existingScript.id;
         } else {
-          const scriptRes = await api_tts.createScript(pName);
+          const scriptRes = await api_tts.createScript(pName, "Vietnamese", 200, currentTtsProjectId || undefined);
           if (scriptRes && scriptRes.data && scriptRes.data.id) {
             ttsScriptId = scriptRes.data.id;
           }
@@ -1379,7 +1514,7 @@ export default function IngredientToVideoMode() {
             if (voice) {
               const sceneIndex = storyBoards.indexOf(sb);
               tasks.push(
-                api_tts.addSentence(ttsScriptId, dlg.text, String(voice.id), dlg.emotion, `ultimate-scene-${sceneIndex}`, "", 1.0, 1.0, orderCounter++)
+                api_tts.addSentence(ttsScriptId, dlg.text, String(voice.id), dlg.emotion, `ultimate-scene-${sceneIndex}`, "", 1.0, 1.0, orderCounter++, dlg.characterName)
                   .then(sentenceRes => {
                     if (sentenceRes.data && sentenceRes.data.id) {
                       return api_tts.renderSentence(sentenceRes.data.id);
@@ -1390,6 +1525,13 @@ export default function IngredientToVideoMode() {
                   })
               );
             } else {
+              const sceneIndex = storyBoards.indexOf(sb);
+              tasks.push(
+                api_tts.addSentence(ttsScriptId, dlg.text, undefined, dlg.emotion, `ultimate-scene-${sceneIndex}`, "", 1.0, 1.0, orderCounter++, dlg.characterName)
+                  .catch(err => {
+                    console.error(`[Audio Job] Lỗi lưu câu thoại "${dlg.text.substring(0, 20)}...":`, err);
+                  })
+              );
               console.warn(`[Audio Job] Không tìm thấy voice cho nhân vật: ${dlg.characterName}`);
             }
           }
@@ -1705,7 +1847,8 @@ export default function IngredientToVideoMode() {
   return (
     <div className="h-full flex flex-col space-y-4 text-gray-200">
 
-      {/* Top 50% - Editor */}
+      {/* Top 50% - Editor (Commented out per user request) */}
+      {false && (
       <div className="bg-black/20 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col md:flex-row gap-6 shrink-0 relative overflow-visible z-20">
         {/* Decorative glow */}
         <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 blur-[80px] rounded-full pointer-events-none"></div>
@@ -2481,6 +2624,7 @@ export default function IngredientToVideoMode() {
           </div>
         </div>
       </div>
+      )}
 
       {/* Bottom 50% - Table */}
       <div className="bg-black/20 backdrop-blur-xl border border-white/10 rounded-2xl flex-1 p-6 shadow-xl flex flex-col z-10 overflow-hidden min-h-[300px]">
@@ -2593,7 +2737,7 @@ export default function IngredientToVideoMode() {
 
                       <button
                         onClick={(e) => handleConvertAllProject(project, e)}
-                        disabled={isConvertingAll[project]}
+                        disabled={isConvertingAll[project] || isSyncingAll[project]}
                         className={`flex items-center space-x-1 px-2.5 py-1.5 border rounded-lg transition-colors shadow-sm ${isConvertingAll[project]
                           ? 'bg-purple-900/50 border-purple-500/50 text-purple-400 cursor-not-allowed'
                           : 'bg-purple-500/20 hover:bg-purple-500/30 border-purple-500/50 text-purple-400'
@@ -2606,6 +2750,23 @@ export default function IngredientToVideoMode() {
                           <Wand2 size={16} />
                         )}
                         <span className="text-[10px] font-semibold whitespace-nowrap hidden md:inline">Convert All</span>
+                      </button>
+
+                      <button
+                        onClick={(e) => handleSyncMergeVoiceAllProject(project, e)}
+                        disabled={isConvertingAll[project] || isSyncingAll[project]}
+                        className={`flex items-center space-x-1 px-2.5 py-1.5 border rounded-lg transition-colors shadow-sm ${isSyncingAll[project]
+                          ? 'bg-blue-900/50 border-blue-500/50 text-blue-400 cursor-not-allowed'
+                          : 'bg-blue-500/20 hover:bg-blue-500/30 border-blue-500/50 text-blue-400'
+                          }`}
+                        title="Ghép giọng tất cả các video đã render xong ảnh và có audio"
+                      >
+                        {isSyncingAll[project] ? (
+                          <div className="w-4 h-4 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+                        ) : (
+                          <Volume2 size={16} />
+                        )}
+                        <span className="text-[10px] font-semibold whitespace-nowrap hidden md:inline">Ghép giọng All</span>
                       </button>
 
                       <div className="text-fuchsia-400/70 group-hover/project:text-fuchsia-300 transition-colors cursor-pointer p-1">
@@ -2791,15 +2952,7 @@ export default function IngredientToVideoMode() {
                                                     >
                                                       {globalPlayer?.id === s.id ? <PauseCircle size={18} /> : <Play size={18} fill="currentColor" />}
                                                     </button>
-                                                    {(s.audioPath || s.status?.toLowerCase() === 'completed') && (
-                                                      <button
-                                                        onClick={() => window.open(api_tts.getStreamUrl(s.id), '_blank')}
-                                                        className="p-2 rounded-full bg-slate-800 text-slate-400 hover:text-emerald-400 border border-slate-700 transition-all"
-                                                        title="Tải Audio"
-                                                      >
-                                                        <Download size={14} />
-                                                      </button>
-                                                    )}
+
                                                     {(s.audioPath || s.status?.toLowerCase() === 'completed') && (row.videoURL || row.result || row.result_image || row.s3Key) && (
                                                       (() => {
                                                         const resultVid = row.videoURL || row.result || row.result_image || row.s3Key;
@@ -2807,7 +2960,7 @@ export default function IngredientToVideoMode() {
                                                         return (
                                                           <button
                                                             onClick={() => handleMergeAudioToVideo(row.id, s.id)}
-                                                            disabled={mergingSentences[s.id]}
+                                                            disabled={mergingSentences[s.id] || syncingSentences[s.id]}
                                                             className={`px-3 py-1.5 rounded-lg border transition-all flex items-center justify-center gap-1.5 text-xs font-medium ${mergingSentences[s.id]
                                                               ? 'bg-purple-900/50 border-purple-500/50 text-purple-400 cursor-not-allowed'
                                                               : isConverted
@@ -2834,13 +2987,13 @@ export default function IngredientToVideoMode() {
                                                     {(s.audioPath || s.status?.toLowerCase() === 'completed') && (row.videoURL || row.result || row.result_image || row.s3Key) && (
                                                       <button
                                                         onClick={() => handleSyncMergeVoice(row.id, s.id)}
-                                                        disabled={mergingSentences[s.id]}
-                                                        className={`px-3 py-1.5 rounded-lg border transition-all flex items-center justify-center gap-1.5 text-xs font-medium ${mergingSentences[s.id]
+                                                        disabled={mergingSentences[s.id] || syncingSentences[s.id]}
+                                                        className={`px-3 py-1.5 rounded-lg border transition-all flex items-center justify-center gap-1.5 text-xs font-medium ${syncingSentences[s.id]
                                                           ? 'bg-blue-900/50 border-blue-500/50 text-blue-400 cursor-not-allowed'
                                                           : 'bg-blue-600/20 border-blue-500/30 text-blue-400 hover:bg-blue-600 hover:text-white hover:border-blue-500 hover:shadow-[0_0_15px_rgba(59,130,246,0.4)]'
                                                           }`}
                                                       >
-                                                        {mergingSentences[s.id] && conversionProgress[s.id] === undefined ? (
+                                                        {syncingSentences[s.id] ? (
                                                           <div className="w-3.5 h-3.5 rounded-full border-2 border-blue-400 border-t-transparent animate-spin shrink-0" />
                                                         ) : (
                                                           <Volume2 size={14} className="shrink-0" />

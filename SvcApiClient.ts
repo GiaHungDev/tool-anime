@@ -38,7 +38,45 @@ export class SvcApiClient {
             headers["Content-Type"] = "application/json";
         }
 
-        const response = await fetch(url, { ...options, headers });
+        let finalUrl = url;
+        let finalOptions = { ...options, headers };
+
+        const projectStr = localStorage.getItem('current_project');
+        if (projectStr) {
+            try {
+                const project = JSON.parse(projectStr);
+                if (project && project.id) {
+                    // Append to URL for GET
+                    if (!options.method || options.method.toUpperCase() === 'GET') {
+                        const urlObj = new URL(finalUrl, window.location.origin);
+                        if (!urlObj.searchParams.has('projectId')) {
+                            urlObj.searchParams.append('projectId', project.id);
+                            finalUrl = urlObj.toString();
+                        }
+                    }
+                    // Append to FormData or JSON Body for POST/PATCH
+                    else if (['POST', 'PATCH', 'PUT'].includes(options.method?.toUpperCase() || '')) {
+                        if (typeof finalOptions.body === 'string') {
+                            try {
+                                const parsedBody = JSON.parse(finalOptions.body);
+                                if (typeof parsedBody === 'object' && !parsedBody.projectId) {
+                                    parsedBody.projectId = project.id;
+                                    finalOptions.body = JSON.stringify(parsedBody);
+                                }
+                            } catch (e) {
+                                // Body is not JSON
+                            }
+                        } else if (finalOptions.body instanceof FormData) {
+                            if (!finalOptions.body.has('projectId')) {
+                                finalOptions.body.append('projectId', project.id);
+                            }
+                        }
+                    }
+                }
+            } catch (e) { }
+        }
+
+        const response = await fetch(finalUrl, finalOptions);
 
         if (!response.ok) {
             let errorMsg = `HTTP Error ${response.status}: ${response.statusText}`;
